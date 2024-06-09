@@ -1,0 +1,122 @@
+version: "3.8"
+
+name: postgres-kafka-redis-ui
+
+volumes:
+  postgresql_data:
+    driver: local
+  postgresql_init_scripts:
+    driver: local
+  postgresql_preinit_scripts:
+    driver: local
+  kafka_data:
+    driver: local
+  redis_data:
+    driver: local
+  redis_ui_data:
+    driver: local
+
+networks:
+  kafka-net:
+    driver: bridge
+  redis-net:
+    driver: bridge
+  postgresql-net:
+    driver: bridge
+
+services:
+  postgresql:
+    image: bitnami/postgresql:latest
+    networks:
+      - postgresql-net
+    ports:
+      - 5432:5432
+    volumes:
+      - postgresql_data:/bitnami/postgresql
+      - postgresql_init_scripts:/docker-entrypoint-initdb.d
+      - postgresql_preinit_scripts:/docker-entrypoint-preinitdb.d
+    environment:
+      POSTGRESQL_USERNAME: root
+      POSTGRESQL_PASSWORD: root
+      POSTGRESQL_DATABASE: root
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  kafka:
+    image: bitnami/kafka:latest
+    networks:
+      - kafka-net
+    ports:
+      - 29092:29092
+    volumes:
+      - kafka_data:/bitnami
+    environment:
+      # KRaft settings
+      KAFKA_CFG_NODE_ID: 0
+      KAFKA_CFG_PROCESS_ROLES: controller,broker
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
+      # Listeners
+      KAFKA_CFG_LISTENERS: EXTERNAL_SAME_HOST://:29092,INTERNAL://:9092,CONTROLLER://:9093
+      KAFKA_CFG_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL_SAME_HOST://localhost:29092
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL_SAME_HOST:PLAINTEXT
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: INTERNAL
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics.sh --list --bootstrap-server localhost:9092 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    networks:
+      - kafka-net
+    ports:
+      - 8080:8080
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      AUTH_TYPE: LOGIN_FORM
+      SPRING_SECURITY_USER_NAME: root
+      SPRING_SECURITY_USER_PASSWORD: root
+    restart: always
+
+  redis:
+    image: bitnami/redis:latest
+    networks:
+      - redis-net
+    ports:
+      - 6379:6379
+    volumes:
+      - redis_data:/bitnami/redis/data
+    environment:
+      REDIS_DATABASE: root
+      REDIS_PASSWORD: root
+      REDIS_DISABLE_COMMANDS: FLUSHDB,FLUSHALL
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  redis-ui:
+    image: redislabs/redisinsight:latest
+    networks:
+      - redis-net
+    ports:
+      - 5540:5540
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - redis_ui_data:/data
+    restart: always
